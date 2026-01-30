@@ -1,0 +1,16 @@
+# Template pour site statique
+name: static-site
+description: Site web statique HTML/CSS/JS
+
+files:
+  - path: index.html
+    required: true
+  - path: style.css
+    required: true
+  - path: script.js
+    required: false
+
+render_config:
+  type: static_site
+  buildCommand: "echo 'Ready'"
+  publishPath: "./"

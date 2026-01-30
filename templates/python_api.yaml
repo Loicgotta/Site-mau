@@ -1,0 +1,17 @@
+# Template pour API Python
+name: python-api
+description: API REST Python avec Flask ou FastAPI
+
+files:
+  - path: requirements.txt
+    required: true
+  - path: app.py
+    required: true
+  - path: Dockerfile
+    required: false
+
+render_config:
+  type: web_service
+  runtime: python
+  buildCommand: "pip install -r requirements.txt"
+  startCommand: "python app.py"

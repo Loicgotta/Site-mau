@@ -1,0 +1,22 @@
+# Template pour application React
+name: react-app
+description: Application React avec Vite
+
+files:
+  - path: package.json
+    required: true
+  - path: vite.config.js
+    required: true
+  - path: index.html
+    required: true
+  - path: src/App.jsx
+    required: true
+  - path: src/main.jsx
+    required: true
+  - path: src/index.css
+    required: false
+
+render_config:
+  type: static_site
+  buildCommand: "npm install && npm run build"
+  publishPath: "./dist"
