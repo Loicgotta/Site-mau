@@ -6,17 +6,54 @@ Expose l'agent via une API REST pour utilisation sur Render
 import os
 import sys
 import traceback
+import logging
+from datetime import datetime
 from flask import Flask, request, jsonify, render_template_string
 from flask_cors import CORS
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# Configuration du logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 CORS(app)
 
-# Import de l'agent
-from agent import CodeGenerator
+# Gestionnaire d'erreurs global pour toujours renvoyer du JSON
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Gestionnaire d'erreurs global"""
+    logger.error(f"Erreur non gérée: {e}", exc_info=True)
+    exc_type, exc_value, exc_tb = sys.exc_info()
+    tb_str = ''.join(traceback.format_exception(exc_type, exc_value, exc_tb))
+
+    return jsonify({
+        "error": str(e),
+        "error_type": type(e).__name__,
+        "traceback": tb_str,
+        "timestamp": datetime.now().isoformat()
+    }), 500
+
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({"error": "Route non trouvée", "error_type": "NotFound"}), 404
+
+@app.errorhandler(500)
+def server_error(e):
+    return jsonify({"error": "Erreur serveur interne", "error_type": "ServerError"}), 500
+
+# Import de l'agent (après la config Flask)
+try:
+    from agent import CodeGenerator
+    logger.info("Module CodeGenerator importé avec succès")
+except Exception as e:
+    logger.error(f"Erreur import CodeGenerator: {e}")
+    CodeGenerator = None
 
 # Template HTML pour l'interface web
 HTML_TEMPLATE = """
@@ -526,7 +563,9 @@ def api_status():
     return jsonify({
         "api_configured": bool(api_key and len(api_key) > 10),
         "api_key_preview": api_key[:20] + "..." if api_key else None,
-        "model": "claude-sonnet-4-20250514"
+        "model": "claude-sonnet-4-20250514",
+        "generator_loaded": CodeGenerator is not None,
+        "python_version": sys.version
     })
 
 
@@ -539,12 +578,22 @@ def generate():
         - prompt: Description du projet
         - name: Nom du projet (optionnel)
     """
-    from datetime import datetime
+    logger.info("=== Nouvelle requête de génération ===")
 
     try:
         data = request.get_json()
+        if not data:
+            logger.error("Pas de données JSON reçues")
+            return jsonify({
+                "error": "Données JSON invalides ou manquantes",
+                "error_type": "ValidationError",
+                "timestamp": datetime.now().isoformat()
+            }), 400
+
         prompt = data.get("prompt", "")
         name = data.get("name", "generated-project")
+
+        logger.info(f"Projet: {name}, Prompt: {prompt[:100]}...")
 
         if not prompt:
             return jsonify({
@@ -553,9 +602,19 @@ def generate():
                 "timestamp": datetime.now().isoformat()
             }), 400
 
+        # Vérifier si CodeGenerator a été importé
+        if CodeGenerator is None:
+            logger.error("CodeGenerator n'a pas pu être importé")
+            return jsonify({
+                "error": "Module CodeGenerator non disponible - erreur d'import",
+                "error_type": "ImportError",
+                "timestamp": datetime.now().isoformat()
+            }), 500
+
         # Vérifier la clé API
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
+            logger.error("Clé API non configurée")
             return jsonify({
                 "error": "Clé API Anthropic non configurée",
                 "error_type": "ConfigurationError",
@@ -563,9 +622,14 @@ def generate():
                 "timestamp": datetime.now().isoformat()
             }), 500
 
+        logger.info(f"Clé API présente: {api_key[:20]}...")
+        logger.info("Initialisation du générateur...")
+
         # Générer le projet
         generator = CodeGenerator(api_key=api_key)
+        logger.info("Appel à l'API Claude...")
         files = generator.generate_project(prompt, name)
+        logger.info(f"Génération terminée: {len(files) if files else 0} fichiers")
 
         if not files:
             return jsonify({
