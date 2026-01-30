@@ -76,7 +76,7 @@ def create(
     name: str = typer.Option(None, "--name", "-n", help="Nom du projet"),
     deploy: bool = typer.Option(True, "--deploy/--no-deploy", help="Déployer automatiquement"),
     model: str = typer.Option(
-        "claude-opus-4-5-20250514",
+        "claude-sonnet-4-20250514",
         "--model",
         "-m",
         help="Modèle Claude à utiliser",

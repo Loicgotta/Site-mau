@@ -52,7 +52,7 @@ TYPES DE PROJETS SUPPORTÉS:
 
 Génère TOUJOURS un projet complet avec tous les fichiers nécessaires."""
 
-    def __init__(self, api_key: str, model: str = "claude-opus-4-5-20250514"):
+    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514"):
         """
         Initialise le générateur de code
 
