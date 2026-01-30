@@ -4,6 +4,8 @@ Expose l'agent via une API REST pour utilisation sur Render
 """
 
 import os
+import sys
+import traceback
 from flask import Flask, request, jsonify, render_template_string
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -152,11 +154,88 @@ HTML_TEMPLATE = """
             margin: 0 auto 20px;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
-        .error {
-            background: rgba(255,0,0,0.1);
+
+        /* Styles pour les erreurs */
+        .error-container {
+            background: rgba(255,68,68,0.1);
+            border: 2px solid #ff4444;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+            display: none;
+        }
+        .error-container.show { display: block; }
+        .error-container h3 {
+            color: #ff4444;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .error-message {
+            background: rgba(0,0,0,0.4);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            color: #ff6b6b;
+            font-weight: 500;
+        }
+        .error-details {
+            background: #1a1a2e;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: monospace;
+            font-size: 12px;
+            color: #ccc;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .error-details-label {
+            color: #888;
+            font-size: 12px;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .error-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .error-info-item {
+            background: rgba(0,0,0,0.3);
+            padding: 10px;
+            border-radius: 6px;
+        }
+        .error-info-item label {
+            color: #888;
+            font-size: 11px;
+            margin-bottom: 4px;
+        }
+        .error-info-item span {
+            color: #ff6b6b;
+            font-family: monospace;
+            font-size: 13px;
+        }
+        .close-error {
+            background: transparent;
             border: 1px solid #ff4444;
             color: #ff4444;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-top: 15px;
+            width: auto;
         }
+        .close-error:hover {
+            background: rgba(255,68,68,0.2);
+            transform: none;
+            box-shadow: none;
+        }
+
         .examples {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -177,12 +256,43 @@ HTML_TEMPLATE = """
         }
         .example h4 { color: #00d9ff; margin-bottom: 8px; }
         .example p { font-size: 14px; color: #888; }
+
+        .status-bar {
+            background: rgba(0,0,0,0.3);
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 13px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .status-bar .api-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #00ff88;
+        }
+        .status-dot.error { background: #ff4444; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🤖 Agent IA de Déploiement</h1>
         <p class="subtitle">Générez des applications complètes avec Claude</p>
+
+        <div class="status-bar">
+            <div class="api-status">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Vérification API...</span>
+            </div>
+            <span id="modelName" style="color: #888;"></span>
+        </div>
 
         <div class="card">
             <label for="projectName">Nom du projet</label>
@@ -200,6 +310,16 @@ HTML_TEMPLATE = """
             <div class="spinner"></div>
             <p>Claude génère votre projet...</p>
             <p style="color: #888; font-size: 14px;">Cela peut prendre 30-60 secondes</p>
+        </div>
+
+        <!-- Zone d'erreur détaillée -->
+        <div class="error-container" id="errorContainer">
+            <h3>❌ Erreur</h3>
+            <div class="error-message" id="errorMessage"></div>
+            <div class="error-info" id="errorInfo"></div>
+            <div class="error-details-label">Détails techniques (traceback)</div>
+            <div class="error-details" id="errorDetails"></div>
+            <button class="close-error" onclick="closeError()">Fermer</button>
         </div>
 
         <div class="result" id="result">
@@ -238,9 +358,80 @@ HTML_TEMPLATE = """
             landing: "Crée une landing page moderne pour une startup tech avec:\\n- Hero section avec CTA\\n- Section fonctionnalités\\n- Témoignages clients\\n- Section pricing\\n- Footer avec liens"
         };
 
+        // Vérifier le statut de l'API au chargement
+        async function checkApiStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+
+                const dot = document.getElementById('statusDot');
+                const text = document.getElementById('statusText');
+                const model = document.getElementById('modelName');
+
+                if (data.api_configured) {
+                    dot.classList.remove('error');
+                    text.textContent = 'API Anthropic configurée';
+                    text.style.color = '#00ff88';
+                    model.textContent = 'Modèle: ' + data.model;
+                } else {
+                    dot.classList.add('error');
+                    text.textContent = 'API non configurée';
+                    text.style.color = '#ff4444';
+                }
+            } catch (e) {
+                document.getElementById('statusDot').classList.add('error');
+                document.getElementById('statusText').textContent = 'Erreur de connexion';
+            }
+        }
+
+        checkApiStatus();
+
         function useExample(type) {
             document.getElementById('prompt').value = examples[type];
             document.getElementById('projectName').value = type + '-project';
+        }
+
+        function showError(error) {
+            const container = document.getElementById('errorContainer');
+            const message = document.getElementById('errorMessage');
+            const details = document.getElementById('errorDetails');
+            const info = document.getElementById('errorInfo');
+
+            message.textContent = error.error || 'Une erreur inconnue est survenue';
+
+            // Afficher les infos supplémentaires
+            let infoHtml = '';
+            if (error.error_type) {
+                infoHtml += `<div class="error-info-item"><label>Type</label><span>${error.error_type}</span></div>`;
+            }
+            if (error.status_code) {
+                infoHtml += `<div class="error-info-item"><label>Code HTTP</label><span>${error.status_code}</span></div>`;
+            }
+            if (error.model) {
+                infoHtml += `<div class="error-info-item"><label>Modèle</label><span>${error.model}</span></div>`;
+            }
+            if (error.timestamp) {
+                infoHtml += `<div class="error-info-item"><label>Timestamp</label><span>${error.timestamp}</span></div>`;
+            }
+            info.innerHTML = infoHtml;
+
+            // Afficher le traceback
+            if (error.traceback) {
+                details.textContent = error.traceback;
+                details.style.display = 'block';
+            } else if (error.details) {
+                details.textContent = JSON.stringify(error.details, null, 2);
+                details.style.display = 'block';
+            } else {
+                details.style.display = 'none';
+            }
+
+            container.classList.add('show');
+            document.getElementById('result').classList.remove('show');
+        }
+
+        function closeError() {
+            document.getElementById('errorContainer').classList.remove('show');
         }
 
         async function generateProject() {
@@ -248,17 +439,19 @@ HTML_TEMPLATE = """
             const name = document.getElementById('projectName').value || 'my-project';
 
             if (!prompt.trim()) {
-                alert('Veuillez décrire votre projet');
+                showError({ error: 'Veuillez décrire votre projet' });
                 return;
             }
 
             const btn = document.getElementById('generateBtn');
             const loading = document.getElementById('loading');
             const result = document.getElementById('result');
+            const errorContainer = document.getElementById('errorContainer');
 
             btn.disabled = true;
             loading.classList.add('show');
             result.classList.remove('show');
+            errorContainer.classList.remove('show');
 
             try {
                 const response = await fetch('/api/generate', {
@@ -269,15 +462,19 @@ HTML_TEMPLATE = """
 
                 const data = await response.json();
 
-                if (data.error) {
-                    throw new Error(data.error);
+                if (data.error || !response.ok) {
+                    showError(data);
+                    return;
                 }
 
                 displayFiles(data.files);
                 result.classList.add('show');
 
             } catch (error) {
-                alert('Erreur: ' + error.message);
+                showError({
+                    error: 'Erreur réseau: ' + error.message,
+                    error_type: 'NetworkError'
+                });
             } finally {
                 btn.disabled = false;
                 loading.classList.remove('show');
@@ -322,6 +519,17 @@ def health():
     return jsonify({"status": "healthy", "service": "ai-deployer"})
 
 
+@app.route("/api/status")
+def api_status():
+    """Vérifie le statut de l'API"""
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    return jsonify({
+        "api_configured": bool(api_key and len(api_key) > 10),
+        "api_key_preview": api_key[:20] + "..." if api_key else None,
+        "model": "claude-sonnet-4-20250514"
+    })
+
+
 @app.route("/api/generate", methods=["POST"])
 def generate():
     """
@@ -331,25 +539,40 @@ def generate():
         - prompt: Description du projet
         - name: Nom du projet (optionnel)
     """
+    from datetime import datetime
+
     try:
         data = request.get_json()
         prompt = data.get("prompt", "")
         name = data.get("name", "generated-project")
 
         if not prompt:
-            return jsonify({"error": "Le prompt est requis"}), 400
+            return jsonify({
+                "error": "Le prompt est requis",
+                "error_type": "ValidationError",
+                "timestamp": datetime.now().isoformat()
+            }), 400
 
         # Vérifier la clé API
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
-            return jsonify({"error": "Clé API Anthropic non configurée"}), 500
+            return jsonify({
+                "error": "Clé API Anthropic non configurée",
+                "error_type": "ConfigurationError",
+                "details": "Ajoutez ANTHROPIC_API_KEY dans les variables d'environnement Render",
+                "timestamp": datetime.now().isoformat()
+            }), 500
 
         # Générer le projet
         generator = CodeGenerator(api_key=api_key)
         files = generator.generate_project(prompt, name)
 
         if not files:
-            return jsonify({"error": "Aucun fichier généré"}), 500
+            return jsonify({
+                "error": "Aucun fichier généré",
+                "error_type": "GenerationError",
+                "timestamp": datetime.now().isoformat()
+            }), 500
 
         return jsonify({
             "success": True,
@@ -359,7 +582,36 @@ def generate():
         })
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        # Capturer le traceback complet
+        exc_type, exc_value, exc_tb = sys.exc_info()
+        tb_str = ''.join(traceback.format_exception(exc_type, exc_value, exc_tb))
+
+        # Extraire les détails de l'erreur API Anthropic si disponible
+        error_details = {}
+        status_code = None
+
+        if hasattr(e, 'response'):
+            try:
+                error_details = e.response.json() if hasattr(e.response, 'json') else {}
+                status_code = e.response.status_code if hasattr(e.response, 'status_code') else None
+            except:
+                pass
+
+        if hasattr(e, 'status_code'):
+            status_code = e.status_code
+
+        if hasattr(e, 'body'):
+            error_details = e.body if isinstance(e.body, dict) else {"raw": str(e.body)}
+
+        return jsonify({
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "status_code": status_code,
+            "model": "claude-sonnet-4-20250514",
+            "details": error_details,
+            "traceback": tb_str,
+            "timestamp": datetime.now().isoformat()
+        }), 500
 
 
 @app.route("/api/examples")
