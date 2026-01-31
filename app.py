@@ -491,13 +491,39 @@ HTML_TEMPLATE = """
             errorContainer.classList.remove('show');
 
             try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 min timeout
+
                 const response = await fetch('/api/generate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt, name })
+                    body: JSON.stringify({ prompt, name }),
+                    signal: controller.signal
                 });
 
-                const data = await response.json();
+                clearTimeout(timeoutId);
+
+                // Lire d'abord comme texte pour gérer les erreurs HTML
+                const responseText = await response.text();
+                let data;
+
+                try {
+                    data = JSON.parse(responseText);
+                } catch (parseError) {
+                    // La réponse n'est pas du JSON (probablement une erreur HTML de Render)
+                    showError({
+                        error: 'Le serveur a renvoyé une réponse invalide (pas du JSON)',
+                        error_type: 'ServerError',
+                        status_code: response.status,
+                        details: {
+                            status: response.status,
+                            statusText: response.statusText,
+                            responsePreview: responseText.substring(0, 500)
+                        },
+                        traceback: 'Réponse brute du serveur:\\n\\n' + responseText.substring(0, 2000)
+                    });
+                    return;
+                }
 
                 if (data.error || !response.ok) {
                     showError(data);
@@ -508,10 +534,19 @@ HTML_TEMPLATE = """
                 result.classList.add('show');
 
             } catch (error) {
-                showError({
-                    error: 'Erreur réseau: ' + error.message,
-                    error_type: 'NetworkError'
-                });
+                if (error.name === 'AbortError') {
+                    showError({
+                        error: 'Timeout: La génération a pris trop de temps (> 3 minutes)',
+                        error_type: 'TimeoutError',
+                        details: { suggestion: 'Essayez avec un prompt plus simple ou réessayez plus tard' }
+                    });
+                } else {
+                    showError({
+                        error: 'Erreur réseau: ' + error.message,
+                        error_type: 'NetworkError',
+                        traceback: error.stack || 'Pas de stack trace disponible'
+                    });
+                }
             } finally {
                 btn.disabled = false;
                 loading.classList.remove('show');
