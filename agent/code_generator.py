@@ -3,15 +3,14 @@ Générateur de code utilisant l'API Claude d'Anthropic
 """
 
 import os
-import json
 import re
+import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict
 from anthropic import Anthropic
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
 
-console = Console()
+# Configuration du logging
+logger = logging.getLogger(__name__)
 
 
 class CodeGenerator:
@@ -60,6 +59,7 @@ Génère TOUJOURS un projet complet avec tous les fichiers nécessaires."""
             api_key: Clé API Anthropic
             model: Modèle Claude à utiliser
         """
+        logger.info(f"Initialisation CodeGenerator avec modèle: {model}")
         self.client = Anthropic(api_key=api_key)
         self.model = model
         self.output_dir = Path(os.getenv("OUTPUT_DIR", "./generated_projects"))
@@ -75,18 +75,11 @@ Génère TOUJOURS un projet complet avec tous les fichiers nécessaires."""
         Returns:
             Dictionnaire {chemin_fichier: contenu}
         """
-        console.print(f"\n[bold blue]Génération du projet:[/bold blue] {project_name}")
-        console.print(f"[dim]Prompt:[/dim] {prompt[:100]}...")
+        logger.info(f"Génération du projet: {project_name}")
+        logger.info(f"Prompt: {prompt[:100]}...")
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("[cyan]Claude génère le code...", total=None)
-
-            # Appel à l'API Claude
-            enhanced_prompt = f"""Génère un projet complet appelé "{project_name}" avec les spécifications suivantes:
+        # Appel à l'API Claude
+        enhanced_prompt = f"""Génère un projet complet appelé "{project_name}" avec les spécifications suivantes:
 
 {prompt}
 
@@ -97,24 +90,31 @@ IMPORTANT:
 - Ajoute un Dockerfile si nécessaire
 - Le projet doit pouvoir se lancer immédiatement après installation"""
 
+        logger.info("Appel API Claude en cours...")
+
+        try:
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=16000,
                 system=self.SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": enhanced_prompt}],
             )
-
-            progress.update(task, description="[green]Code généré!")
+            logger.info("Réponse API Claude reçue")
+        except Exception as e:
+            logger.error(f"Erreur API Claude: {e}")
+            raise
 
         # Parser la réponse pour extraire les fichiers
         content = response.content[0].text
+        logger.info(f"Taille de la réponse: {len(content)} caractères")
+
         files = self._parse_files(content)
 
         # Ajouter render.yaml si absent
         if "render.yaml" not in files:
             files["render.yaml"] = self._generate_render_yaml(files, project_name)
 
-        console.print(f"[green]✓[/green] {len(files)} fichiers générés")
+        logger.info(f"{len(files)} fichiers générés")
         return files
 
     def _parse_files(self, content: str) -> Dict[str, str]:
@@ -136,16 +136,20 @@ IMPORTANT:
         for filepath, file_content in matches:
             filepath = filepath.strip()
             files[filepath] = file_content.strip()
+            logger.debug(f"Fichier trouvé: {filepath}")
 
         # Fallback: chercher les blocs de code classiques avec noms de fichiers
         if not files:
+            logger.info("Aucun fichier trouvé avec pattern principal, essai fallback...")
             # Pattern alternatif pour ```language filename
             alt_pattern = r"```(?:\w+)?\s*#?\s*([^\n]+\.[a-zA-Z]+)\n(.*?)```"
             matches = re.findall(alt_pattern, content, re.DOTALL)
             for filepath, file_content in matches:
                 if "/" in filepath or "." in filepath:
                     files[filepath.strip()] = file_content.strip()
+                    logger.debug(f"Fichier trouvé (fallback): {filepath}")
 
+        logger.info(f"Total fichiers parsés: {len(files)}")
         return files
 
     def _generate_render_yaml(self, files: Dict[str, str], project_name: str) -> str:
@@ -233,13 +237,13 @@ IMPORTANT:
         project_path = self.output_dir / project_name
         project_path.mkdir(parents=True, exist_ok=True)
 
-        console.print(f"\n[bold]Sauvegarde dans:[/bold] {project_path}")
+        logger.info(f"Sauvegarde dans: {project_path}")
 
         for filepath, content in files.items():
             file_path = project_path / filepath
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding="utf-8")
-            console.print(f"  [dim]→[/dim] {filepath}")
+            logger.debug(f"Fichier sauvegardé: {filepath}")
 
-        console.print(f"\n[green]✓[/green] Projet sauvegardé dans {project_path}")
+        logger.info(f"Projet sauvegardé dans {project_path}")
         return project_path
