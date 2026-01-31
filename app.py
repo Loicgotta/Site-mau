@@ -492,7 +492,7 @@ HTML_TEMPLATE = """
 
             try {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 min timeout
+                const timeoutId = setTimeout(() => controller.abort(), 900000); // 15 min timeout
 
                 const response = await fetch('/api/generate', {
                     method: 'POST',
@@ -536,7 +536,7 @@ HTML_TEMPLATE = """
             } catch (error) {
                 if (error.name === 'AbortError') {
                     showError({
-                        error: 'Timeout: La génération a pris trop de temps (> 3 minutes)',
+                        error: 'Timeout: La génération a pris trop de temps (> 15 minutes)',
                         error_type: 'TimeoutError',
                         details: { suggestion: 'Essayez avec un prompt plus simple ou réessayez plus tard' }
                     });
