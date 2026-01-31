@@ -3,18 +3,14 @@ Module de déploiement automatique sur Render
 """
 
 import os
-import json
-import time
 import subprocess
-import tempfile
-import shutil
+import logging
 from pathlib import Path
 from typing import Optional, Dict, Any
 import requests
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 
-console = Console()
+# Configuration du logging
+logger = logging.getLogger(__name__)
 
 
 class RenderDeployer:
@@ -40,14 +36,6 @@ class RenderDeployer:
     ) -> Dict[str, Any]:
         """
         Effectue une requête à l'API Render
-
-        Args:
-            method: Méthode HTTP (GET, POST, etc.)
-            endpoint: Point de terminaison API
-            data: Données à envoyer
-
-        Returns:
-            Réponse JSON
         """
         url = f"{self.RENDER_API_BASE}{endpoint}"
         response = requests.request(
@@ -55,8 +43,8 @@ class RenderDeployer:
         )
 
         if response.status_code >= 400:
-            console.print(f"[red]Erreur API Render:[/red] {response.status_code}")
-            console.print(response.text)
+            logger.error(f"Erreur API Render: {response.status_code}")
+            logger.error(response.text)
             raise Exception(f"Erreur API Render: {response.status_code}")
 
         return response.json() if response.text else {}
@@ -64,80 +52,46 @@ class RenderDeployer:
     def deploy_static_site(
         self, project_path: Path, project_name: str
     ) -> Dict[str, str]:
-        """
-        Déploie un site statique sur Render
+        """Déploie un site statique sur Render"""
+        logger.info(f"Déploiement sur Render: {project_name}")
 
-        Args:
-            project_path: Chemin du projet
-            project_name: Nom du service
+        service_config = {
+            "type": "static_site",
+            "name": project_name.lower().replace(" ", "-").replace("_", "-"),
+            "ownerId": self._get_owner_id(),
+            "repo": self._create_github_repo(project_path, project_name),
+            "autoDeploy": "yes",
+            "branch": "main",
+            "buildCommand": "echo 'Build complete'",
+            "publishPath": "./",
+        }
 
-        Returns:
-            Informations de déploiement incluant l'URL
-        """
-        console.print(f"\n[bold blue]Déploiement sur Render:[/bold blue] {project_name}")
+        try:
+            response = self._api_request("POST", "/services", service_config)
+            service_id = response.get("service", {}).get("id")
+            service_url = response.get("service", {}).get("serviceDetails", {}).get("url")
 
-        # Méthode 1: Via GitHub (si repo disponible)
-        # Méthode 2: Upload direct via API
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            # Étape 1: Créer un repo GitHub temporaire et pusher
-            task = progress.add_task("[cyan]Préparation du déploiement...", total=None)
-
-            # Créer le service sur Render
-            service_config = {
-                "type": "static_site",
-                "name": project_name.lower().replace(" ", "-").replace("_", "-"),
-                "ownerId": self._get_owner_id(),
-                "repo": self._create_github_repo(project_path, project_name),
-                "autoDeploy": "yes",
-                "branch": "main",
-                "buildCommand": "echo 'Build complete'",
-                "publishPath": "./",
+            logger.info("Service créé!")
+            return {
+                "service_id": service_id,
+                "url": service_url,
+                "status": "deployed",
+                "dashboard": f"https://dashboard.render.com/web/{service_id}",
             }
 
-            progress.update(task, description="[cyan]Création du service Render...")
-
-            try:
-                response = self._api_request("POST", "/services", service_config)
-                service_id = response.get("service", {}).get("id")
-                service_url = response.get("service", {}).get("serviceDetails", {}).get("url")
-
-                progress.update(task, description="[green]Service créé!")
-
-                return {
-                    "service_id": service_id,
-                    "url": service_url,
-                    "status": "deployed",
-                    "dashboard": f"https://dashboard.render.com/web/{service_id}",
-                }
-
-            except Exception as e:
-                # Fallback: déploiement manuel via instructions
-                progress.update(task, description="[yellow]Utilisation du déploiement alternatif...")
-                return self._manual_deploy_instructions(project_path, project_name)
+        except Exception as e:
+            logger.warning("Utilisation du déploiement alternatif...")
+            return self._manual_deploy_instructions(project_path, project_name)
 
     def deploy_via_blueprint(
         self, project_path: Path, project_name: str
     ) -> Dict[str, str]:
-        """
-        Déploie via Render Blueprint (render.yaml)
-
-        Args:
-            project_path: Chemin du projet
-            project_name: Nom du projet
-
-        Returns:
-            Informations de déploiement
-        """
-        console.print(f"\n[bold blue]Déploiement Blueprint:[/bold blue] {project_name}")
+        """Déploie via Render Blueprint (render.yaml)"""
+        logger.info(f"Déploiement Blueprint: {project_name}")
 
         render_yaml = project_path / "render.yaml"
         if not render_yaml.exists():
-            console.print("[yellow]⚠ Pas de render.yaml trouvé, création automatique...[/yellow]")
+            logger.warning("Pas de render.yaml trouvé, création automatique...")
             self._create_default_render_yaml(project_path, project_name)
 
         return self._deploy_with_github(project_path, project_name)
@@ -155,30 +109,13 @@ class RenderDeployer:
         return ""
 
     def _create_github_repo(self, project_path: Path, project_name: str) -> str:
-        """
-        Crée un repo GitHub pour le projet (si possible)
-
-        Returns:
-            URL du repo ou chaîne vide
-        """
-        # Cette fonction tenterait de créer un repo GitHub
-        # Pour l'instant, retourne vide pour utiliser le fallback
+        """Crée un repo GitHub pour le projet (si possible)"""
         return ""
 
     def _deploy_with_github(
         self, project_path: Path, project_name: str
     ) -> Dict[str, str]:
-        """
-        Déploie le projet via GitHub + Render
-
-        Args:
-            project_path: Chemin du projet
-            project_name: Nom du projet
-
-        Returns:
-            Instructions et informations de déploiement
-        """
-        # Initialiser git si nécessaire
+        """Déploie le projet via GitHub + Render"""
         git_dir = project_path / ".git"
         if not git_dir.exists():
             subprocess.run(["git", "init"], cwd=project_path, capture_output=True)
@@ -194,16 +131,7 @@ class RenderDeployer:
     def _manual_deploy_instructions(
         self, project_path: Path, project_name: str
     ) -> Dict[str, str]:
-        """
-        Génère des instructions de déploiement manuel
-
-        Args:
-            project_path: Chemin du projet
-            project_name: Nom du projet
-
-        Returns:
-            Instructions de déploiement
-        """
+        """Génère des instructions de déploiement manuel"""
         safe_name = project_name.lower().replace(" ", "-").replace("_", "-")
 
         instructions = f"""
@@ -225,7 +153,7 @@ Ou utilisez le lien direct:
 https://render.com/deploy?repo=https://github.com/VOTRE_USERNAME/{safe_name}
 """
 
-        console.print(instructions)
+        logger.info(instructions)
 
         return {
             "status": "ready_to_deploy",
@@ -249,15 +177,7 @@ https://render.com/deploy?repo=https://github.com/VOTRE_USERNAME/{safe_name}
         (project_path / "render.yaml").write_text(content)
 
     def check_deployment_status(self, service_id: str) -> Dict[str, Any]:
-        """
-        Vérifie le statut d'un déploiement
-
-        Args:
-            service_id: ID du service Render
-
-        Returns:
-            Statut du déploiement
-        """
+        """Vérifie le statut d'un déploiement"""
         try:
             response = self._api_request("GET", f"/services/{service_id}")
             return response
@@ -270,19 +190,11 @@ https://render.com/deploy?repo=https://github.com/VOTRE_USERNAME/{safe_name}
             response = self._api_request("GET", "/services")
             return response.get("services", response) if isinstance(response, dict) else response
         except Exception as e:
-            console.print(f"[red]Erreur:[/red] {e}")
+            logger.error(f"Erreur: {e}")
             return []
 
     def get_service_url(self, service_id: str) -> Optional[str]:
-        """
-        Récupère l'URL d'un service déployé
-
-        Args:
-            service_id: ID du service
-
-        Returns:
-            URL du service ou None
-        """
+        """Récupère l'URL d'un service déployé"""
         try:
             response = self._api_request("GET", f"/services/{service_id}")
             service = response.get("service", response)
