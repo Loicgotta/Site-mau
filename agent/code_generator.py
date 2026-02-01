@@ -51,7 +51,7 @@ TYPES DE PROJETS SUPPORTÉS:
 
 Génère TOUJOURS un projet complet avec tous les fichiers nécessaires."""
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514"):
+    def __init__(self, api_key: str, model: str = "claude-3-5-haiku-20241022"):
         """
         Initialise le générateur de code
 
@@ -95,7 +95,7 @@ IMPORTANT:
         try:
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=16000,
+                max_tokens=4096,  # Réduit pour économiser la mémoire
                 system=self.SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": enhanced_prompt}],
             )

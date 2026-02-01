@@ -598,7 +598,7 @@ def api_status():
     return jsonify({
         "api_configured": bool(api_key and len(api_key) > 10),
         "api_key_preview": api_key[:20] + "..." if api_key else None,
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-3-5-haiku-20241022",
         "generator_loaded": CodeGenerator is not None,
         "python_version": sys.version
     })
@@ -706,7 +706,7 @@ def generate():
             "error": str(e),
             "error_type": type(e).__name__,
             "status_code": status_code,
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-3-5-haiku-20241022",
             "details": error_details,
             "traceback": tb_str,
             "timestamp": datetime.now().isoformat()
